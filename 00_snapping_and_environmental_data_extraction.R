@@ -82,10 +82,11 @@ sql <- sqlInterpolate(con,
 )
 dbExecute(con, sql)
 
-# Add columns for HydroLAKES ID and point geometry
+# Add columns for HydroLAKES ID, point geometry and is_coastal flag
 sql <- sqlInterpolate(con,
   "ALTER TABLE ?point_table
    ADD COLUMN hylak_id integer,
+   ADD COLUMN is_coastal boolean,
    ADD COLUMN geom_orig geometry(POINT, 4326)",
   point_table = dbQuoteIdentifier(con, point_table)
 )
@@ -119,7 +120,6 @@ sql <- sqlInterpolate(con,
 )
 dbExecute(con, sql)
 
-
 # Update occurrence point table with ID of HydroLAKES lake the point lies in
 sql <- sqlInterpolate(con,
   "UPDATE ?point_table poi
@@ -127,6 +127,17 @@ sql <- sqlInterpolate(con,
    FROM ?lake_table lak
    WHERE st_intersects(poi.geom_orig, lak.geom)",
   lake_table = dbQuoteIdentifier(con, lake_table),
+  point_table = dbQuoteIdentifier(con, point_table)
+)
+dbExecute(con, sql)
+
+# Set `is_coastal` flag to TRUE for all records that do not lie inside a
+# Hydrography90m sub-catchment. These may include occurrences in coastal
+# regions as well as endorheic lakes.
+sql <- sqlInterpolate(con,
+  "UPDATE ?point_table AS poi
+     SET is_coastal = TRUE
+   WHERE subc_id IS NULL",
   point_table = dbQuoteIdentifier(con, point_table)
 )
 dbExecute(con, sql)
