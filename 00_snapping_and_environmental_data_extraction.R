@@ -278,3 +278,150 @@ for (reg_unit in woc_reg_ids_dist$reg_id_dist) {
   dbExecute(con, sql)
 }
 
+
+# --- Extract environmental data (Environment90m) for local subcatchment ------
+
+# Set output file names
+output_file_bioclim <- "WoC_snapped_bioclim_period_1981-2010_local.csv"
+output_file_landcover <- "WoC_snapped_landcover_2020_local.csv"
+output_file_soil <- "WoC_snapped_soil_local.csv"
+output_file_topography - "WoC_snapped_topography_hydrography90m_local.csv"
+
+
+## 1. Bioclim
+
+# Create a view to join environmental data for Bioclim
+sql <- sqlInterpolate(con,
+  "CREATE VIEW ?point_view AS
+    SELECT
+      poi.id,
+      poi.basin_id_dist,
+      poi.strahler_order_dist,
+      env.*
+    FROM ?point_table poi
+      LEFT JOIN ?env_table env ON
+        poi.subc_id_dist = env.subc_id
+        AND poi.reg_id_dist = env.reg_id
+   ORDER BY poi.id",
+  point_view = dbQuoteIdentifier(con, clim_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, clim_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, clim_view)
+)
+bioclim_data <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(bioclim_data, output_file_bioclim, row.names = FALSE)
+
+
+## 2. Landcover
+
+# Create a view to join environmental data for landcover (year 2020)
+sql <- sqlInterpolate(con,
+  "CREATE VIEW ?point_view AS
+    SELECT
+      poi.id,
+      poi.basin_id_dist,
+      poi.strahler_order_dist,
+      env.*
+    FROM ?point_table poi
+    LEFT JOIN ?env_table env ON
+      poi.subc_id_dist = env.subc_id
+      AND poi.reg_id_dist = env.reg_id
+   ORDER BY poi.id",
+  point_view = dbQuoteIdentifier(con, land_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, land_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, land_view)
+)
+landcover_data <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(landcover_data, output_file_landcover, row.names = FALSE)
+
+
+## 3. Soil
+
+# Create a view to join environmental data for soil
+sql <- sqlInterpolate(con,
+  "CREATE OR REPLACE VIEW ?point_view AS
+      SELECT
+        poi.id,
+        poi.basin_id_dist,
+        poi.strahler_order_dist,
+        env.*
+    FROM ?point_table poi
+    LEFT JOIN ?env_table env ON
+      poi.subc_id_dist = env.subc_id
+      AND poi.reg_id_dist = env.reg_id
+    ORDER BY poi.id",
+  point_view = dbQuoteIdentifier(con, soil_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, soil_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, soil_view)
+)
+soil_data <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(soil_data, output_file_soil, row.names = FALSE)
+
+
+## 4. Topography/Hydrography90m
+
+# Create a view to join environmental data for topography (local subcatchment)
+sql <- sqlInterpolate(con,
+  "CREATE VIEW ?point_view AS
+    SELECT
+      poi.id,
+      poi.basin_id_dist,
+      poi.strahler_order_dist,
+      env.*
+    FROM ?point_table poi
+    LEFT JOIN ?env_table env ON
+      poi.subc_id_dist = env.subc_id
+      AND poi.reg_id_dist = env.reg_id
+    ORDER BY poi.id",
+  point_view = dbQuoteIdentifier(con, topo_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, topo_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, topo_view)
+)
+topo_data <- dbGetQuery(con, sql)
+
+# remove flowpos and other unused columns from result
+topo_data <- topo_data |> dplyr::select(
+  !c(
+    scheidegger, drwal_old,
+    flowpos_min, flowpos_max, flowpos_mean, flowpos_sd,
+    flow_min, flow_max, flow_mean, flow_sd
+  )
+)
+
+# Export to CSV
+write.csv(topo_data, output_file_topography, row.names = FALSE)
+
+
