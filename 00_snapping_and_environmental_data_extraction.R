@@ -7,7 +7,13 @@
 #           stored in the GeoFRESH PostgreSQL database.
 # Input   : WoC_original.csv  (columns: id, long_or, lat_or)
 # Output  : WoC_snapped.csv  (columns: long_or, lat_or, long_snap, lat_snap)
-#           WoC_environmental_values.csv
+#           WoC_snapped_bioclim_period_1981-2010_local.csv,
+#           WoC_snapped_landcover_2020_local.csv, WoC_snapped_soil_local.csv,
+#           WoC_snapped_topography_hydrography90m_local.csv,
+#           WoC_snapped_avg_bioclim_period_1981-2010_upstream.csv,
+#           WoC_snapped_avg_landcover_2020_upstream.csv,
+#           WoC_snapped_avg_soil_upstream.csv,
+#           WoC_snapped_avg_topography_hydrography90m_upstream.csv
 # Requires: DBI (1.3.0), readr (2.1.5), dplyr (1.1.4)
 # =============================================================================
 
@@ -40,8 +46,12 @@ clim_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_clim")
 land_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_land")
 soil_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_soil")
 topo_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_topo")
-flow_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_flow")
-subc_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_subc_area")
+
+# Set database view names for environmental data joins (upstream catchment)
+clim_upstr_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_clim_upstr")
+land_upstr_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_land_upstr")
+soil_upstr_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_soil_upstr")
+topo_upstr_view <- Id(schema = "shiny_user", table = "world_of_crayfish_join_topo_upstr")
 
 # Set GeoFRESH database table names
 regional_units_table <- Id(schema = "hydro", table = "regional_units")
@@ -54,8 +64,7 @@ clim_table <- SQL("stats_climate")
 land_table <- SQL("stats_landuse")
 soil_table <- SQL("stats_soil")
 topo_table <- SQL("stats_topo")
-flow_table <- SQL("stats_flow1k")
-subc_table <- SQL("sub_catchments")
+
 
 # --- Load data ---------------------------------------------------------------
 
@@ -285,7 +294,7 @@ for (reg_unit in woc_reg_ids_dist$reg_id_dist) {
 output_file_bioclim <- "WoC_snapped_bioclim_period_1981-2010_local.csv"
 output_file_landcover <- "WoC_snapped_landcover_2020_local.csv"
 output_file_soil <- "WoC_snapped_soil_local.csv"
-output_file_topography - "WoC_snapped_topography_hydrography90m_local.csv"
+output_file_topography <- "WoC_snapped_topography_hydrography90m_local.csv"
 
 
 ## 1. Bioclim
@@ -412,7 +421,7 @@ sql <- sqlInterpolate(con,
 )
 topo_data <- dbGetQuery(con, sql)
 
-# remove flowpos and other unused columns from result
+# Remove flowpos and other unused columns from result
 topo_data <- topo_data |> dplyr::select(
   !c(
     scheidegger, drwal_old,
@@ -424,4 +433,231 @@ topo_data <- topo_data |> dplyr::select(
 # Export to CSV
 write.csv(topo_data, output_file_topography, row.names = FALSE)
 
+
+# --- Extract environmental data (Environment90m) for upstream catchment ------
+
+# Set output file names
+output_file_bioclim_upstream <- "WoC_snapped_avg_bioclim_period_1981-2010_upstream.csv"
+output_file_landcover_upstream <- "WoC_snapped_avg_landcover_2020_upstream.csv"
+output_file_soil_upstream <- "WoC_snapped_avg_soil_upstream.csv"
+output_file_topography_upstream <- "WoC_snapped_avg_topography_hydrography90m_upstream.csv"
+
+## 1. Bioclim
+
+# Get column names from Bioclim view for local sub-catchment
+bioclim_fields <- dbListFields(con, dbQuoteIdentifier(con, clim_view))
+
+# Select only the columns names that contain '_mean'
+bioclim_columns <- bioclim_fields[grepl("_mean", bioclim_fields)]
+
+# Create SQL strings for calculation of average
+bioclim_columns_upstr_query <- sapply(
+  bioclim_columns, function(x) {
+    paste0("round(avg(", x, ")::numeric, 4) AS ", x)
+  },
+  USE.NAMES = FALSE
+)
+
+# Create a view to join environmental data for Bioclim (upstream catchment)
+sql_string <- paste(
+  "CREATE VIEW ?point_view AS
+    SELECT
+      poi.id,
+      min(poi.basin_id_dist) AS basin_id_dist,
+      min(poi.strahler_order_dist) AS strahler_order_dist,",
+      paste0(clim_columns_upstr_query, collapse = ", "),
+   "FROM ?env_table env
+    RIGHT JOIN ?point_table poi
+      ON env.subc_id = ANY (poi.upstream_dist)
+      AND env.reg_id = poi.reg_id_dist
+    GROUP BY poi.id
+    ORDER BY poi.id"
+)
+sql <- sqlInterpolate(con,
+  sql_string,
+  point_view = dbQuoteIdentifier(con, clim_upstr_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, clim_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, clim_upstr_view)
+)
+bioclim_data_upstr <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(bioclim_data_upstr, output_file_bioclim_upstream, row.names = FALSE)
+
+## 2. Landcover
+
+# Get column names from landcover view for local sub-catchment
+land_fields <- dbListFields(con, dbQuoteIdentifier(con, land_view))
+
+# Select only the column names that contain '0'
+land_columns <- land_fields[grepl("0", land_fields)]
+
+# Create SQL strings for calculation of average
+land_columns_upstr_query <- sapply(
+  land_columns, function(x) {
+    paste0("round(avg(", x, ")::numeric, 4) AS ", x)
+  },
+  USE.NAMES = FALSE
+)
+
+# Create a view to join environmental data for landcover (upstream catchment)
+sql_string <- paste(
+  "CREATE VIEW ?point_view AS
+   SELECT
+     poi.id,
+     min(poi.basin_id_dist) AS basin_id_dist,
+     min(poi.strahler_order_dist) AS strahler_order_dist,",
+     paste0(land_columns_upstr_query, collapse = ", "),
+   "FROM ?env_table env
+    RIGHT JOIN ?point_table poi
+      ON env.subc_id = ANY (poi.upstream_dist)
+      AND env.reg_id = poi.reg_id_dist
+    GROUP BY poi.id
+    ORDER BY poi.id"
+)
+sql <- sqlInterpolate(con,
+  sql_string,
+  point_view = dbQuoteIdentifier(con, land_upstr_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, land_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, land_upstr_view)
+)
+land_data_upstr <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(land_data_upstr, output_file_landcover_upstream, row.names = FALSE)
+
+
+## 3. Soil
+
+# Get column names from soil view for local sub-catchment
+soil_fields <- dbListFields(con, dbQuoteIdentifier(con, soil_view))
+
+# Select only the columns names that contain '_mean'
+soil_columns <- soil_fields[grepl("_mean", soil_fields)]
+
+# Create SQL strings for calculation of average
+soil_columns_upstr_query <- sapply(
+  soil_columns, function(x) {
+    paste0("round(avg(", x, ")::numeric, 4) AS ", x)
+  },
+  USE.NAMES = FALSE
+)
+
+# Create a view to join stats for soil (upstream catchment)
+sql_string <- paste(
+  "CREATE OR REPLACE VIEW ?point_view AS
+    SELECT
+      poi.id,
+      min(poi.basin_id_dist) AS basin_id_dist,
+      min(poi.strahler_order_dist) AS strahler_order_dist,",
+      paste0(soil_columns_upstr_query, collapse = ", "),
+   "FROM ?env_table env
+    RIGHT JOIN ?point_table poi
+      ON env.subc_id = ANY (poi.upstream_dist)
+      AND env.reg_id = poi.reg_id_dist
+    GROUP BY poi.id
+    ORDER BY poi.id"
+)
+sql <- sqlInterpolate(con,
+  sql_string,
+  point_view = dbQuoteIdentifier(con, soil_upstr_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, soil_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, soil_upstr_view)
+)
+soil_data_upstr <- dbGetQuery(con, sql)
+
+# Remove texmht columns (not valid)
+soil_upstr_filtered <- soil_data_upstr |> dplyr::select(!starts_with("texmht_"))
+
+# Export to CSV
+write.csv(soil_upstr_filtered, output_file_soil_upstream, row.names = FALSE)
+
+
+## 4. Topography/Hydrography90m
+
+# These topography columns contain categorical values, excluded here
+# topo_categorical <- c("strahler", "shreve", "horton", "hack", "topo_dim")
+
+# These topography columns are only valid for local sub-catchment, excluded here:
+# topo_local <- c("cum_length", "source_elev", "outlet_elev", "out_drop")
+
+
+# Column names without '_mean'
+topo_without_stats <- c(
+  "length", "stright", "sinusoid", "flow_accum", "out_dist", "elev_drop", "gradient"
+)
+
+# Get column names from topography/hydrography view for local sub-catchment
+topo_fields <- dbListFields(con, dbQuoteIdentifier(con, topo_view))
+
+# Select only the columns names that contain '_mean'
+topo_fields_mean <- topo_fields[grepl("_mean", topo_fields)]
+
+# Remove flowpos and flow from selected columns, not used
+topo_remove <- c("flowpos_mean", "flow_mean")
+topo_fields_mean <- topo_fields_mean[!(topo_fields_mean %in% topo_remove)]
+
+# Combine selected column names
+topo_columns <- c(topo_without_stats, topo_fields_mean)
+
+# Create SQL strings for calculation of average
+topo_columns_upstr_query <- sapply(
+  topo_columns, function(x) {
+    paste0("round(avg(", x, ")::numeric, 4) AS ", x)
+  },
+  USE.NAMES = FALSE
+)
+
+# Create a view to join stats for topography (upstream catchment)
+sql_string <- paste(
+  "CREATE OR REPLACE VIEW ?point_view AS
+    SELECT poi.id,
+      min(poi.basin_id_dist) AS basin_id_dist,
+      min(poi.strahler_order_dist) AS strahler_order_dist,",
+      paste0(topo_columns_upstr_query, collapse = ", "),
+   "FROM ?env_table env
+    RIGHT JOIN ?point_table poi
+      ON env.subc_id = ANY (poi.upstream_dist)
+      AND env.reg_id = poi.reg_id_dist
+    GROUP BY poi.id
+    ORDER BY poi.id"
+)
+sql <- sqlInterpolate(con,
+  sql_string,
+  point_view = dbQuoteIdentifier(con, topo_upstr_view),
+  point_table = dbQuoteIdentifier(con, point_table),
+  env_table = dbQuoteIdentifier(con, topo_table)
+)
+dbExecute(con, sql)
+
+# Query data from view
+sql <- sqlInterpolate(con,
+  "SELECT * FROM ?point_view",
+  point_view = dbQuoteIdentifier(con, topo_upstr_view)
+)
+topo_data_upstr <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(topo_data_upstr, output_file_topography_upstream, row.names = FALSE)
 
