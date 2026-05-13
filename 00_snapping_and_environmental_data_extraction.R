@@ -225,3 +225,56 @@ woc_snapped <- dbGetQuery(con, sql)
 # Export to CSV
 write.csv(woc_snapped, output_file, row.names = FALSE)
 
+# --- Calculate upstream areas for all snapped occurrence records -------------
+
+# Get all regional units that contain occurrence records snapped to stream
+# segments that are not headwaters (Strahler order > 1)
+sql <- sqlInterpolate(con,
+  "SELECT DISTINCT reg_id_dist
+    FROM ?point_table
+    WHERE subc_id_dist IS NOT NULL
+    AND strahler_order > 1
+    AND upstream_dist IS NULL
+    ORDER BY reg_id_dist",
+  point_table = dbQuoteIdentifier(con, point_table)
+)
+woc_reg_ids_dist <- dbGetQuery(con, sql)
+
+# Run upstream catchment calculation per regional_unit
+for (reg_unit in woc_reg_ids_dist$reg_id_dist) {
+
+  message("Processing upstream for regional unit:", reg_unit)
+
+  sql <- sqlInterpolate(con,
+    "WITH unique_subcs AS (
+      SELECT DISTINCT
+        subc_id_dist,
+        reg_id_dist,
+        basin_id_dist
+      FROM ?point_table
+      WHERE reg_id_dist = ?reg_unit
+      AND subc_id_dist IS NOT NULL
+      AND upstream_dist IS NULL
+      AND strahler_order_dist > 1
+    ),
+    upstream_results AS (
+      SELECT
+        subc.subc_id_dist,
+        upc.nodes
+      FROM unique_subcs subc,
+         LATERAL hydro.pgr_upstreamcomponent(
+         subc.subc_id_dist, subc.reg_id_dist, subc.basin_id_dist) upc
+    )
+    UPDATE ?point_table poi
+      SET upstream_dist = upstr.nodes
+    FROM upstream_results upstr
+      WHERE poi.subc_id_dist = upstr.subc_id_dist
+      AND poi.reg_id_dist = ?reg_unit
+      AND poi.upstream_dist IS NULL
+      AND poi.strahler_order_dist > 1",
+    reg_unit = dbQuoteLiteral(con, reg_unit),
+    point_table = dbQuoteIdentifier(con, point_table)
+  )
+  dbExecute(con, sql)
+}
+
