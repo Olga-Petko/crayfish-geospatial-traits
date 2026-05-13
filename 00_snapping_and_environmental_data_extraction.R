@@ -28,6 +28,7 @@ con <- dbConnect(RPostgres::Postgres(),
 # --- Parameters --------------------------------------------------------------
 
 input_file <- "WoC_original.csv"
+output_file <- "WoC_snapped.csv"
 
 # Set database table names for World of Crayfish occurrence data import
 point_table <- Id(schema = "shiny_user", table = "world_of_crayfish")
@@ -141,3 +142,86 @@ sql <- sqlInterpolate(con,
   point_table = dbQuoteIdentifier(con, point_table)
 )
 dbExecute(con, sql)
+
+
+# --- Snap occurrence records to nearest Hydrography90m stream segment --------
+
+# Add columns for distance-based snapping
+sql <- sqlInterpolate(con,
+  "ALTER TABLE ?point_table
+     ADD COLUMN subc_id_dist integer,
+     ADD COLUMN basin_id_dist integer,
+     ADD COLUMN strahler_order_dist smallint,
+     ADD COLUMN reg_id_dist smallint,
+     ADD COLUMN geom_dist geometry(POINT, 4326),
+     ADD COLUMN upstream_dist bigint[]",
+  point_table = dbQuoteIdentifier(con, point_table)
+)
+dbExecute(con, sql)
+
+# Run snapping to nearest stream segment
+sql <- sqlInterpolate(con,
+  "UPDATE ?point_table AS poi
+    SET
+      subc_id_dist = seg2.subc_id,
+      basin_id_dist = seg2.basin_id,
+      strahler_order_dist = seg2.strahler,
+      reg_id_dist = seg2.reg_id,
+      geom_dist = ST_LineInterpolatePoint(
+         seg2.geom,
+         ST_LineLocatePoint(seg2.geom, poi.geom_orig)
+      )
+    FROM (
+      SELECT
+        poi_inner.id AS poi_id,
+        seg1.subc_id,
+        seg1.basin_id,
+        seg1.strahler,
+        seg1.reg_id,
+        seg1.geom
+      FROM ?point_table poi_inner
+      CROSS JOIN LATERAL (
+        SELECT
+          seg.subc_id,
+          seg.basin_id,
+          seg.strahler,
+          seg.reg_id,
+          seg.geom,
+          seg.geom <-> poi_inner.geom_orig AS dist
+        FROM ?segments_table seg
+        WHERE seg.geom IS NOT NULL
+        ORDER BY dist
+        LIMIT 1
+      ) seg1
+    ) seg2
+    WHERE poi.id = seg2.poi_id",
+  segments_table = dbQuoteIdentifier(con, stream_table),
+  point_table = dbQuoteIdentifier(con, point_table)
+)
+dbExecute(con, sql)
+
+# --- Export snapped occurrence records to CSV --------------------------------
+
+# Query database table with snapped occurrence coordinates
+sql <- sqlInterpolate(con,
+  "SELECT
+    id,
+    latitude AS lat_or,
+    longitude AS long_or,
+    round(st_y(geom_dist)::numeric, 6) AS lat_snap,
+    round(st_x(geom_dist)::numeric, 6) AS long_snap,
+    reg_id_dist AS reg_id,
+    basin_id_dist AS basin_id,
+    subc_id_dist AS subc_id,
+    hylak_id,
+    strahler_order_dist AS strahler_order,
+    is_coastal
+   FROM ?point_table
+   ORDER BY id",
+  point_table = dbQuoteIdentifier(con, point_table)
+)
+woc_snapped <- dbGetQuery(con, sql)
+
+# Export to CSV
+write.csv(woc_snapped, output_file, row.names = FALSE)
+
