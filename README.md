@@ -8,12 +8,13 @@ R scripts used to produce the Global Crayfish Database of Geospatial Traits, as 
 
 ## Overview
 
-This repository contains the R scripts for distance calculation, data filtering, and statistical descriptor computation. Environmental extraction and spatial snapping of occurrence records to the Hydrography90m river network were performed by the GeoFRESH team (Leibniz-IGB, Berlin) using the [GeoFRESH platform](https://geofresh.org/) infrastructure; those processing steps are documented in the manuscript Methods section.
+This repository contains the R scripts for spatially snapping the occurrence records to the river network, environmental data extraction, distance calculation, data filtering, and statistical descriptor computation. Environmental data extraction and snapping to the Hydrography90m river network were performed by the GeoFRESH team (Leibniz-IGB, Berlin) using the [GeoFRESH platform](https://geofresh.org/) infrastructure.
 
 ## Scripts
 
 | Script | Description |
 |--------|-------------|
+| `00_snapping_and_environmental_data_extraction.R` | Spatially snaps the original occurrence coordinates to the Hydrography90m river network, calculates the upstream catchment for each occurrence coordinate and extracts the local and average upstream environmental values from the Environment90m dataset stored in the GeoFRESH PostgreSQL database. Input:`WoC_original.csv`. Output: `WoC_snapped.csv`, `WoC_snapped_bioclim_period_1981-2010_local.csv`, `WoC_snapped_landcover_2020_local.csv, WoC_snapped_soil_local.csv`, `WoC_snapped_topography_hydrography90m_local.csv`, `WoC_snapped_avg_bioclim_period_1981-2010_upstream.csv`, `WoC_snapped_avg_landcover_2020_upstream.csv`, `WoC_snapped_avg_soil_upstream.csv`, `WoC_snapped_avg_topography_hydrography90m_upstream.csv`. |
 | `01_distance_calculation.R` | Calculates geodesic distance between original occurrence coordinates and snapped Hydrography90m segment centroids for each record, and derives three binary threshold flags (200 m, 500 m, 1 km). Input: `WoC_snapped.csv`. Output: `WoC_snapped_dist.csv`. |
 | `02_data_filtering.R` | Applies the sequential quality filtering pipeline: removal of records without valid scientific names, low-accuracy records, records with snapping distance > 1 km, segment-level deduplication (one record per sub-catchment per species), and exclusion of taxa with fewer than 10 records. Input: `combined_data_master.csv`. Output: `combined_data_filtered.csv` + `filtering_report.csv`. |
 | `03_environmental_descriptors.R` | Computes 20 statistical descriptors per taxon per environmental variable, separately for Local (l_) and Upstream (u_) scales: n, SE, CV, min, max, mean, median, range, SD, skewness, kurtosis, IQR, MAD, Q05, Q25, Q75, Q95, occupied range, occupied IQR, standardised range, standardised IQR. Input: `combined_data_final.csv`. Output: one CSV + XLSX per species per scale in `descriptors/` folder. |
@@ -27,11 +28,15 @@ This repository contains the R scripts for distance calculation, data filtering,
   - `readr` (≥ 2.1.5) — CSV reading/writing
   - `writexl` (≥ 1.5.4) — XLSX export
   - `moments` (≥ 0.14.1) — skewness and kurtosis
+  - `DBI` (≥ 1.3.0) - database access
 
 ## Input data
 
 - **Occurrence records:** extracted from the [World of Crayfish® platform](https://world.crayfish.ro/) (extraction date: 30 September 2025)
-- **Environmental variables:** extracted from [GeoFRESH](https://geofresh.org/) / [Hydrography90m](https://hydrography.org/hydrography90m/hydrography90m_layers/) at 90 m resolution
+- **Stream segments vector data:** from the [Hydrography90m](https://hydrography.org/hydrography90m/hydrography90m_layers/) datasets at 90 m resolution accessed using the [GeoFRESH platform](https://geofresh.org/) infrastructure
+- **Environmental variables:** from the [Environment90m](https://hydrography.org/environment90m/) dataset
+extracted from the [GeoFRESH platform](https://geofresh.org/) (extraction date: 13 October 2025)
+
 
 Input data files are not included in this repository. The processed output data are available at Mendeley Data (see below).
 
